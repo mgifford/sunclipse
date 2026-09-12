@@ -642,6 +642,12 @@
         </div>
       </section>
 
+      <!-- ============ Since your last visit ============ -->
+      <section class="card" id="since-section" aria-labelledby="since-heading" hidden>
+        <h2 id="since-heading">Since your last visit here</h2>
+        <p class="summary-text" id="since-text" role="status" aria-live="polite" aria-atomic="true"></p>
+      </section>
+
       <!-- ============ Section 2: Viewing Timeline ============ -->
       <section class="card" id="timeline-section" aria-labelledby="timeline-heading" hidden>
         <h2 id="timeline-heading">Viewing Timeline</h2>
@@ -836,6 +842,8 @@
       alert:        document.getElementById("app-alert"),
 
       scoreSection: document.getElementById("score-section"),
+      sinceSection: document.getElementById("since-section"),
+      sinceText:    document.getElementById("since-text"),
       radialValue:  document.getElementById("radial-value"),
       radialNumber: document.getElementById("radial-number"),
       radialTitle:  document.getElementById("radial-title"),
@@ -882,6 +890,7 @@
       bearingCardinal: null, // e.g. "WSW"
       currentLabel: null, // human label for the current location, if known
       corridor: null,     // [{dist, low}] samples toward the sun
+      lastScore: null,    // most recent computed score
       terrainOffset: 0,   // minutes to shift (0..20)
       countdownTimer: null,
       lastSrMinute: null
@@ -1464,11 +1473,13 @@
           var score = computeScore(m);
           var cat = categoryFor(score);
 
+          state.lastScore = score;
           hideAlert();
           renderScore(score, cat);
           renderSummary(score, cat, m);
           renderData(m);
           renderTimeline();
+          renderSinceLast(recordVisit(lat, lon, score));
           el.terrainSection.hidden = false;
           startCountdown();
         })
@@ -1661,6 +1672,111 @@
       fetchJson(url)
         .then(function (data) { renderResults((data && data.results) || []); })
         .catch(function () { renderResults(null); });
+    }
+
+    /* ============================================================
+       Visit history — "how has the sun shifted since last time?"
+       (localStorage, per rounded location + mode; day-over-day)
+    ============================================================ */
+    var VISITS_KEY = "sunclipse.visits";
+
+    function dayStamp(d) {
+      return d.getFullYear() + "-" + (d.getMonth() + 1) + "-" + d.getDate();
+    }
+    function visitKey(lat, lon, mode) {
+      return lat.toFixed(1) + "," + lon.toFixed(1) + "|" + mode;
+    }
+    function loadVisits() {
+      try {
+        var raw = window.localStorage.getItem(VISITS_KEY);
+        var o = raw ? JSON.parse(raw) : {};
+        return (o && typeof o === "object") ? o : {};
+      } catch (e) { return {}; }
+    }
+    function saveVisits(o) {
+      try { window.localStorage.setItem(VISITS_KEY, JSON.stringify(o)); } catch (e) {}
+    }
+
+    // Record this visit; return the previous day's snapshot to compare against
+    // (or null). Same-day revisits keep the prior day's snapshot as the baseline.
+    function recordVisit(lat, lon, score) {
+      var key = visitKey(lat, lon, state.mode);
+      var today = dayStamp(new Date());
+      var snap = {
+        day: today,
+        at: Date.now(),
+        bearing: state.bearing,
+        eventMin: state.event.getHours() * 60 + state.event.getMinutes(),
+        eventLabel: fmtTime(state.event),
+        score: score
+      };
+      var store = loadVisits();
+      var rec = store[key] || {};
+      var baseline = null;
+      if (rec.current && rec.current.day !== today) {
+        baseline = rec.current;         // day rolled over -> compare to it
+        rec.previous = rec.current;
+      } else if (rec.previous) {
+        baseline = rec.previous;        // same-day revisit -> keep prior baseline
+      }
+      rec.current = snap;
+      store[key] = rec;
+      saveVisits(store);
+      return baseline;
+    }
+
+    function normalizeDeg(d) { return ((d + 540) % 360) - 180; }
+
+    function renderSinceLast(prev) {
+      if (!prev) { el.sinceSection.hidden = true; return; }
+      var verb = isSunrise() ? "rises" : "sets";
+      var parts = [];
+
+      // When
+      var days = Math.max(1, Math.round((Date.now() - prev.at) / 86400000));
+      var when = days === 1 ? "yesterday" : days + " days ago";
+
+      // Time-of-day shift
+      var timeMsg;
+      if (typeof prev.eventMin === "number") {
+        var dt = (state.event.getHours() * 60 + state.event.getMinutes()) - prev.eventMin;
+        var mag = Math.abs(dt);
+        timeMsg = mag < 1
+          ? "at about the same time (" + fmtTime(state.event) + ")"
+          : mag + " minute" + (mag === 1 ? "" : "s") + " " +
+            (dt < 0 ? "earlier" : "later") +
+            " (" + fmtTime(state.event) + " vs " + prev.eventLabel + ")";
+        parts.push("The " + eventWord() + " is now " + timeMsg + ".");
+      }
+
+      // Sky-position shift (relative to facing the sun + absolute N/S)
+      if (state.bearing !== null && typeof prev.bearing === "number") {
+        var db = normalizeDeg(state.bearing - prev.bearing);
+        var mag2 = Math.abs(db);
+        if (mag2 < 0.5) {
+          parts.push("The sun " + verb + " in almost the same spot on the horizon.");
+        } else {
+          var lr = db > 0 ? "to the right" : "to the left";
+          var ns = Math.abs(state.bearing - 180) < Math.abs(prev.bearing - 180)
+            ? "further south" : "further north";
+          parts.push("The sun " + verb + " about " + mag2.toFixed(1) + "° " +
+            lr + " — " + ns + " (" + Math.round(state.bearing) + "° vs " +
+            Math.round(prev.bearing) + "°).");
+        }
+      }
+
+      // Predicted-quality change (light bonus)
+      if (typeof prev.score === "number" && typeof state.lastScore === "number") {
+        var ds = state.lastScore - prev.score;
+        if (Math.abs(ds) >= 1) {
+          parts.push("Predicted quality " + state.lastScore + " vs " + prev.score +
+            " (" + (ds > 0 ? "+" : "") + ds + ").");
+        }
+      }
+
+      el.sinceText.textContent = "You last checked this spot " + when + ". " +
+        parts.join(" ");
+      el.sinceSection.hidden = false;
     }
 
     /* ============================================================
