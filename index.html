@@ -198,6 +198,43 @@
     .search-results button:hover { border-color: var(--accent-gold); }
     .search-msg { color: var(--text-muted); margin: 0.6rem 0 0; }
 
+    button.btn-secondary {
+      background: transparent;
+      color: var(--text-main);
+      border-color: var(--card-border);
+    }
+    button.btn-secondary:hover { border-color: var(--accent-gold); background: transparent; }
+
+    /* --- Saved places ------------------------------------------------ */
+    .saved-places { margin-top: var(--gap); }
+    .saved-heading { font-size: 1.05rem; margin: 0 0 0.5rem; }
+    .saved-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.4rem; }
+    .saved-item { display: flex; gap: 0.4rem; }
+    .saved-item .saved-load {
+      font: inherit;
+      flex: 1 1 auto;
+      text-align: left;
+      cursor: pointer;
+      min-height: var(--touch);
+      padding: 0.6rem 0.9rem;
+      color: var(--text-main);
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: var(--radius);
+    }
+    .saved-item .saved-load:hover { border-color: var(--accent-gold); }
+    .saved-item .saved-remove {
+      font: inherit;
+      cursor: pointer;
+      min-width: var(--touch);
+      min-height: var(--touch);
+      color: var(--text-muted);
+      background: transparent;
+      border: 1px solid var(--card-border);
+      border-radius: var(--radius);
+    }
+    .saved-item .saved-remove:hover { color: var(--poor); border-color: var(--poor); }
+
     button.btn {
       font: inherit;
       font-weight: 600;
@@ -514,7 +551,16 @@
           <span aria-hidden="true">📍</span>
           <span>Use Precise GPS</span>
         </button>
+        <button type="button" class="btn btn-secondary" id="save-btn" hidden>
+          <span aria-hidden="true">★</span>
+          <span>Save this place</span>
+        </button>
       </nav>
+
+      <section class="saved-places" id="saved-wrap" aria-labelledby="saved-heading" hidden>
+        <h2 class="saved-heading" id="saved-heading">Saved places</h2>
+        <ul class="saved-list" id="saved-list"></ul>
+      </section>
 
       <form class="location-search" id="loc-form" role="search">
         <label for="loc-input">Search for a town or place</label>
@@ -661,6 +707,7 @@
               the scene. Clear here lets colour through.
             </p>
             <dl>
+              <div class="metric"><dt>Sun direction</dt><dd id="m-direction">–</dd></div>
               <div class="metric"><dt>Low cloud (&lt;2&nbsp;km)</dt><dd id="m-west">–</dd></div>
             </dl>
           </div>
@@ -770,6 +817,9 @@
       locInput:     document.getElementById("loc-input"),
       locResults:   document.getElementById("loc-results"),
       locHint:      document.getElementById("loc-hint"),
+      saveBtn:      document.getElementById("save-btn"),
+      savedWrap:    document.getElementById("saved-wrap"),
+      savedList:    document.getElementById("saved-list"),
       alert:        document.getElementById("app-alert"),
 
       scoreSection: document.getElementById("score-section"),
@@ -793,6 +843,7 @@
       dataNote:   document.getElementById("data-note"),
       wcTitle:    document.getElementById("wc-title"),
       wcDesc:     document.getElementById("wc-desc"),
+      mDirection: document.getElementById("m-direction"),
       mWest:      document.getElementById("m-west"),
       mMid:       document.getElementById("m-mid"),
       mHigh:      document.getElementById("m-high"),
@@ -811,6 +862,9 @@
       lat: null,
       lon: null,
       event: null,        // Date of the next sunset/sunrise
+      bearing: null,      // sun's compass bearing (deg) at the event
+      bearingCardinal: null, // e.g. "WSW"
+      currentLabel: null, // human label for the current location, if known
       terrainOffset: 0,   // minutes to shift (0..20)
       countdownTimer: null,
       lastSrMinute: null
@@ -820,7 +874,39 @@
     // Fuller's coinages: "sunsight" for sunrise, "sunclipse" for sunset.
     function eventWord() { return isSunrise() ? "sunsight" : "sunclipse"; }
     function plainWord() { return isSunrise() ? "sunrise" : "sunset"; }
-    function horizonWord() { return isSunrise() ? "eastern" : "western"; }
+    function horizonWord() {
+      // Prefer the true compass direction once we've computed it; fall back to
+      // the rough east/west for the brief moment before the first prediction.
+      return state.bearingCardinal || (isSunrise() ? "eastern" : "western");
+    }
+
+    // 16-point compass label for a bearing in degrees (0 = north, clockwise).
+    var COMPASS_16 = ["N","NNE","NE","ENE","E","ESE","SE","SSE",
+                      "S","SSW","SW","WSW","W","WNW","NW","NNW"];
+    function bearingToCardinal(deg) {
+      return COMPASS_16[Math.round(((deg % 360) + 360) % 360 / 22.5) % 16];
+    }
+
+    // Sun's compass bearing (degrees from north) at a moment. SunCalc measures
+    // azimuth in radians from due south, positive toward the west.
+    function sunBearing(when, lat, lon) {
+      var az = SunCalc.getPosition(when, lat, lon).azimuth; // radians, from south
+      var deg = az * 180 / Math.PI + 180; // -> compass degrees from north
+      return ((deg % 360) + 360) % 360;
+    }
+
+    // Point `dist` km from (lat, lon) along a compass `bearing` (degrees).
+    function offsetPoint(lat, lon, bearingDeg, dist) {
+      var b = bearingDeg * Math.PI / 180;
+      var cosLat = Math.cos(lat * Math.PI / 180);
+      var dLat = (dist * Math.cos(b)) / 111.32;
+      var dLon = Math.abs(cosLat) > 1e-6 ? (dist * Math.sin(b)) / (111.32 * cosLat) : 0;
+      var newLat = clamp(lat + dLat, -90, 90);
+      var newLon = lon + dLon;
+      // wrap longitude into [-180, 180]
+      newLon = ((newLon + 180) % 360 + 360) % 360 - 180;
+      return { lat: newLat, lon: newLon };
+    }
 
     /* ============================================================
        Small helpers
@@ -971,10 +1057,15 @@
     function renderData(m) {
       el.dataSection.hidden = false;
       el.dataNote.textContent = "Measured at the hour of astronomical " + eventWord() + ".";
-      el.wcTitle.textContent = isSunrise() ? "Eastern Horizon" : "Western Horizon";
+      var card = state.bearingCardinal || (isSunrise() ? "E" : "W");
+      el.wcTitle.textContent = card + " Horizon (toward the sun)";
       el.wcDesc.textContent =
-        "Low cloud roughly 150 km to your " + (isSunrise() ? "east" : "west") +
-        ", where the sun’s light enters the scene. Clear here lets colour through.";
+        "Low cloud roughly 150 km toward the " + card +
+        " horizon, where the sun’s light enters the scene. Clear here lets " +
+        "colour through.";
+      el.mDirection.textContent = (state.bearing !== null)
+        ? Math.round(state.bearing) + "° " + state.bearingCardinal
+        : "n/a";
       el.mWest.textContent      = pct(m.horizonLow);
       el.mMid.textContent       = pct(m.mid);
       el.mHigh.textContent      = pct(m.high);
@@ -991,6 +1082,9 @@
     function timelinePhases() {
       var ev = state.event;
       var t = state.terrainOffset;
+      var dir = (state.bearing !== null)
+        ? " Look " + state.bearingCardinal + " (" + Math.round(state.bearing) + "°)."
+        : "";
       if (isSunrise()) {
         return [
           {
@@ -1007,7 +1101,7 @@
           {
             time: ev,
             label: "Sunsight",
-            desc: "The sun comes into sight over the true horizon (astronomical sunrise)."
+            desc: "The sun comes into sight over the true horizon (astronomical sunrise)." + dir
           },
           {
             time: addMinutes(ev, 15 + t),
@@ -1036,7 +1130,7 @@
         {
           time: ev,
           label: "Sunclipse",
-          desc: "The sun is eclipsed by the true horizon (astronomical sunset)."
+          desc: "The sun is eclipsed by the true horizon (astronomical sunset)." + dir
         },
         {
           time: addMinutes(ev, 10),
@@ -1198,16 +1292,15 @@
       var mainUrl = "https://api.open-meteo.com/v1/forecast?latitude=" +
                     lat + "&longitude=" + lon + "&" + params;
 
-      // Sunward horizon sample point, ~150 km toward the sun:
-      // west for a sunset, east for a sunrise.
-      var cosLat = Math.cos(lat * Math.PI / 180);
-      var horizonLon = lon;
-      if (Math.abs(cosLat) > 1e-6) {
-        var delta = 150 / (111.32 * cosLat);
-        horizonLon = isSunrise() ? lon + delta : lon - delta;
-      }
+      // Sunward horizon sample point, ~150 km along the sun's TRUE bearing at
+      // the event (not just due west/east) — that's where the low light skims
+      // in from. Falls back to due west/east until the bearing is known.
+      var bearing = (state.bearing !== null)
+        ? state.bearing
+        : (isSunrise() ? 90 : 270);
+      var h = offsetPoint(lat, lon, bearing, 150);
       var horizonUrl = "https://api.open-meteo.com/v1/forecast?latitude=" +
-                    lat + "&longitude=" + horizonLon +
+                    h.lat + "&longitude=" + h.lon +
                     "&hourly=cloud_cover_low&forecast_days=2";
       return { mainUrl: mainUrl, horizonUrl: horizonUrl };
     }
@@ -1235,6 +1328,11 @@
                  "(polar day or night), so a prediction cannot be made.", true);
         return;
       }
+
+      // Where on the horizon the sun actually meets it (varies with season and
+      // latitude — only due east/west at the equinoxes).
+      state.bearing = sunBearing(state.event, lat, lon);
+      state.bearingCardinal = bearingToCardinal(state.bearing);
 
       setAlert("Loading atmospheric data for the next " + eventWord() + "…", false);
 
@@ -1311,9 +1409,11 @@
     }
 
     // Single entry point for every location source (IP, GPS, search).
-    function setLocation(lat, lon) {
+    function setLocation(lat, lon, label) {
       state.lat = lat;
       state.lon = lon;
+      state.currentLabel = label || null;
+      el.saveBtn.hidden = false;
       if (!state.modeExplicit && typeof SunCalc !== "undefined") {
         state.mode = pickDefaultMode(lat, lon);
         state.lastSrMinute = null;
@@ -1331,7 +1431,7 @@
             var place = [data.city, data.region, data.country_name]
               .filter(Boolean).join(", ");
             setStatus("Approximate (IP)" + (place ? " — " + place : ""), "approx");
-            setLocation(data.latitude, data.longitude);
+            setLocation(data.latitude, data.longitude, place || null);
           } else {
             throw new Error("no coordinates returned");
           }
@@ -1360,7 +1460,7 @@
             el.gpsBtn.disabled = false;
             setStatus("Exact (GPS)", "exact");
             hideAlert();
-            setLocation(pos.coords.latitude, pos.coords.longitude);
+            setLocation(pos.coords.latitude, pos.coords.longitude, "My location");
           },
           function (err) {
             if (!isRetry && err.code !== err.PERMISSION_DENIED) {
@@ -1440,7 +1540,7 @@
           el.locResults.innerHTML = "";
           setStatus("Location: " + label, "searched");
           hideAlert();
-          setLocation(r.latitude, r.longitude);
+          setLocation(r.latitude, r.longitude, label);
         });
         li.appendChild(btn);
         el.locResults.appendChild(li);
@@ -1460,6 +1560,79 @@
     }
 
     /* ============================================================
+       Saved places (localStorage; optional, per-browser)
+    ============================================================ */
+    var SAVED_KEY = "sunclipse.savedPlaces";
+
+    function loadSaved() {
+      try {
+        var raw = window.localStorage.getItem(SAVED_KEY);
+        var arr = raw ? JSON.parse(raw) : [];
+        return Array.isArray(arr) ? arr : [];
+      } catch (e) { return []; } // private mode / storage disabled
+    }
+
+    function persistSaved(list) {
+      try {
+        window.localStorage.setItem(SAVED_KEY, JSON.stringify(list));
+        return true;
+      } catch (e) { return false; }
+    }
+
+    function renderSaved() {
+      var list = loadSaved();
+      el.savedList.innerHTML = "";
+      el.savedWrap.hidden = list.length === 0;
+      list.forEach(function (p, i) {
+        var li = document.createElement("li");
+        li.className = "saved-item";
+
+        var load = document.createElement("button");
+        load.type = "button";
+        load.className = "saved-load";
+        load.textContent = p.name;
+        load.addEventListener("click", function () {
+          setStatus("Saved: " + p.name, "searched");
+          hideAlert();
+          setLocation(p.lat, p.lon, p.name);
+        });
+
+        var remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "saved-remove";
+        remove.setAttribute("aria-label", "Remove " + p.name);
+        remove.innerHTML = "<span aria-hidden=\"true\">✕</span>";
+        remove.addEventListener("click", function () {
+          var cur = loadSaved();
+          cur.splice(i, 1);
+          persistSaved(cur);
+          renderSaved();
+        });
+
+        li.appendChild(load);
+        li.appendChild(remove);
+        el.savedList.appendChild(li);
+      });
+    }
+
+    function onSavePlace() {
+      if (state.lat == null || state.lon == null) return;
+      var suggested = state.currentLabel ||
+        (state.lat.toFixed(3) + ", " + state.lon.toFixed(3));
+      var name = window.prompt("Name this place:", suggested);
+      if (name === null) return;               // cancelled
+      name = name.trim() || suggested;
+      var list = loadSaved();
+      list.push({ name: name, lat: state.lat, lon: state.lon });
+      if (!persistSaved(list)) {
+        setAlert("This browser won’t let the page save places (private mode or " +
+                 "storage is disabled).", true);
+        return;
+      }
+      renderSaved();
+    }
+
+    /* ============================================================
        Mode toggle (sunsight / sunclipse)
     ============================================================ */
     function onModeChange(e) {
@@ -1476,6 +1649,7 @@
     ============================================================ */
     el.gpsBtn.addEventListener("click", loadByGps);
     el.locForm.addEventListener("submit", onSearchSubmit);
+    el.saveBtn.addEventListener("click", onSavePlace);
     el.terrainSlider.addEventListener("input", onTerrainChange);
     Array.prototype.forEach.call(
       document.querySelectorAll('input[name="mode"]'),
@@ -1488,6 +1662,7 @@
     });
 
     onTerrainChange(); // initialise readout
+    renderSaved();     // show any places saved in this browser
     loadByIp();
   })();
   </script>
