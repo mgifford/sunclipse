@@ -738,6 +738,18 @@
             </dl>
           </div>
 
+          <div class="data-card" role="group" aria-labelledby="ae-title" aria-describedby="ae-desc">
+            <h3 id="ae-title">Aerosol &amp; Smoke</h3>
+            <p class="card-note" id="ae-desc">
+              Aerosol optical depth (haze and wildfire smoke). A little deepens the
+              colour; a lot dulls the sky to grey.
+            </p>
+            <dl>
+              <div class="metric"><dt>Aerosol depth (AOD)</dt><dd id="m-aod">–</dd></div>
+              <div class="metric"><dt>Sky</dt><dd id="m-aerosol-label">–</dd></div>
+            </dl>
+          </div>
+
         </div>
       </section>
 
@@ -808,7 +820,7 @@
     /* ============================================================
        Constants & element handles
     ============================================================ */
-    var WEIGHTS = { horizon: 0.40, canvas: 0.35, altitude: 0.15, clarity: 0.10 };
+    var WEIGHTS = { horizon: 0.35, canvas: 0.30, altitude: 0.10, clarity: 0.10, aerosol: 0.15 };
 
     var el = {
       statusDot:    document.getElementById("status-dot"),
@@ -852,7 +864,9 @@
       mTotal:     document.getElementById("m-total"),
       mLow:       document.getElementById("m-low"),
       mHumidity:  document.getElementById("m-humidity"),
-      mVisibility:document.getElementById("m-visibility")
+      mVisibility:document.getElementById("m-visibility"),
+      mAod:       document.getElementById("m-aod"),
+      mAerosolLabel: document.getElementById("m-aerosol-label")
     };
 
     var RADIAL_CIRCUMFERENCE = 2 * Math.PI * 52; // r = 52
@@ -990,6 +1004,26 @@
       return clamp(s, 0, 1);
     }
 
+    // Aerosol optical depth (AOD, ~550 nm). Thin-to-moderate aerosol (including
+    // wildfire smoke) deepens reds and oranges; thick smoke flattens the sky to
+    // a dull grey/brown. Returns null when unknown so it drops out of the score.
+    function scoreAerosol(aod) {
+      if (aod === null || aod === undefined || isNaN(aod)) return null;
+      if (aod < 0.10) return 0.7 + (aod / 0.10) * 0.3;   // clean: nice, not enhanced
+      if (aod <= 0.35) return 1;                          // sweet spot: vivid
+      if (aod <= 0.70) return clamp(1 - (aod - 0.35) / 0.35 * 0.6, 0.4, 1); // getting smoky
+      return clamp(0.4 - (aod - 0.70) / 0.80 * 0.3, 0.1, 0.4);            // heavy smoke: dull
+    }
+
+    // Plain-language descriptor for an AOD value.
+    function aerosolLabel(aod) {
+      if (aod === null || aod === undefined || isNaN(aod)) return null;
+      if (aod < 0.10) return { text: "Very clean air", effect: "clear but less dramatic" };
+      if (aod <= 0.35) return { text: "Light haze / smoke", effect: "enhancing the colour" };
+      if (aod <= 0.70) return { text: "Moderate smoke", effect: "starting to mute the colour" };
+      return { text: "Heavy smoke", effect: "dulling the sky to grey" };
+    }
+
     function categoryFor(score) {
       var kind = isSunrise() ? "Sunsight" : "Sunclipse";
       if (score >= 90) return { label: "Vivid Burn Expected", cls: "vivid" };
@@ -998,19 +1032,21 @@
       return { label: "Low / Obscured (Skip)", cls: "low" };
     }
 
+    // Weighted average of the factors that have data; a missing factor (e.g. no
+    // aerosol reading) drops out and the remaining weights are renormalized.
     function computeScore(m) {
-      var parts = {
-        horizon:  scoreHorizon(m.horizonLow),
-        canvas:   scoreCanvas(m.mid, m.high),
-        altitude: scoreAltitude(m.mid, m.high, m.localLow),
-        clarity:  scoreClarity(m.humidity, m.visibilityKm)
-      };
-      var total =
-        parts.horizon  * WEIGHTS.horizon +
-        parts.canvas   * WEIGHTS.canvas +
-        parts.altitude * WEIGHTS.altitude +
-        parts.clarity  * WEIGHTS.clarity;
-      return Math.round(clamp(total, 0, 1) * 100);
+      var factors = [
+        { w: WEIGHTS.horizon,  v: (m.horizonLow === null) ? null : scoreHorizon(m.horizonLow) },
+        { w: WEIGHTS.canvas,   v: scoreCanvas(m.mid, m.high) },
+        { w: WEIGHTS.altitude, v: scoreAltitude(m.mid, m.high, m.localLow) },
+        { w: WEIGHTS.clarity,  v: scoreClarity(m.humidity, m.visibilityKm) },
+        { w: WEIGHTS.aerosol,  v: scoreAerosol(m.aod) }
+      ];
+      var acc = 0, wSum = 0;
+      factors.forEach(function (f) {
+        if (f.v !== null) { acc += f.v * f.w; wSum += f.w; }
+      });
+      return wSum > 0 ? Math.round(clamp(acc / wSum, 0, 1) * 100) : 0;
     }
 
     /* ============================================================
@@ -1085,6 +1121,13 @@
       el.mVisibility.textContent =
         (m.visibilityKm !== null && !isNaN(m.visibilityKm))
           ? m.visibilityKm.toFixed(1) + " km" : "n/a";
+
+      var aLabel = aerosolLabel(m.aod);
+      el.mAod.textContent = (m.aod !== null && m.aod !== undefined && !isNaN(m.aod))
+        ? m.aod.toFixed(2) : "n/a";
+      el.mAerosolLabel.textContent = aLabel
+        ? aLabel.text + " — " + aLabel.effect
+        : "no data";
     }
 
     // Chronological phases for the current mode. Terrain shifts the moment the
@@ -1325,7 +1368,13 @@
                "&longitude=" + p.lon + "&hourly=cloud_cover_low&forecast_days=2"
         };
       });
-      return { mainUrl: mainUrl, corridor: corridor };
+      // Air quality (separate Open-Meteo host) for aerosol optical depth —
+      // the smoke/haze signal. Sampled at the observer's location.
+      var aqUrl = "https://air-quality-api.open-meteo.com/v1/air-quality?latitude=" +
+                  lat + "&longitude=" + lon +
+                  "&hourly=aerosol_optical_depth&forecast_days=2";
+
+      return { mainUrl: mainUrl, corridor: corridor, aqUrl: aqUrl };
     }
 
     function fetchJson(url) {
@@ -1333,6 +1382,14 @@
         if (!r.ok) throw new Error("Weather request failed (" + r.status + ")");
         return r.json();
       });
+    }
+
+    // Non-essential fetch: resolves to null on any failure so one bad request
+    // (a corridor point, air quality) never sinks the whole prediction.
+    function fetchJsonSafe(url) {
+      return fetch(url)
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .catch(function () { return null; });
     }
 
     function runPrediction(lat, lon) {
@@ -1360,12 +1417,13 @@
       setAlert("Loading atmospheric data for the next " + eventWord() + "…", false);
 
       var urls = buildForecastUrls(lat, lon);
-      var fetches = [fetchJson(urls.mainUrl)].concat(
-        urls.corridor.map(function (c) { return fetchJson(c.url); })
-      );
+      var fetches = [fetchJson(urls.mainUrl)]
+        .concat(urls.corridor.map(function (c) { return fetchJsonSafe(c.url); }))
+        .concat([fetchJsonSafe(urls.aqUrl)]);
       Promise.all(fetches)
         .then(function (results) {
           var main = results[0];
+          var aq = results[results.length - 1];
           if (!main.hourly || !main.hourly.time) {
             throw new Error("Unexpected weather response.");
           }
@@ -1386,6 +1444,12 @@
           state.corridor = samples;
           var horizonLow = wSum > 0 ? acc / wSum : null;
 
+          var aod = null;
+          if (aq && aq.hourly && aq.hourly.time) {
+            aod = num(aq.hourly.aerosol_optical_depth,
+                      nearestHourIndex(aq.hourly.time, state.event));
+          }
+
           var m = {
             horizonLow:   horizonLow,
             localLow:     num(main.hourly.cloud_cover_low, idx),
@@ -1393,7 +1457,8 @@
             high:         num(main.hourly.cloud_cover_high, idx),
             total:        num(main.hourly.cloud_cover, idx),
             humidity:     num(main.hourly.relative_humidity_2m, idx),
-            visibilityKm: metersToKm(num(main.hourly.visibility, idx))
+            visibilityKm: metersToKm(num(main.hourly.visibility, idx)),
+            aod:          aod
           };
 
           var score = computeScore(m);
