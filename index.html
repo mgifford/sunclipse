@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="An accessible sunset and sunrise viewing quality predictor. Uses your approximate or precise location plus live cloud data to rate the next sunset or sunrise from 0 to 100.">
+  <meta name="description" content="Sunclipse: an accessible predictor for brilliant sunsights and sunclipses — Buckminster Fuller's words for sunrise and sunset. Uses your location plus live cloud data to rate the next event from 0 to 100.">
   <meta name="color-scheme" content="dark">
-  <title>Sunset &amp; Sunrise Quality Predictor</title>
+  <title>Sunclipse &mdash; Sunsight &amp; Sunclipse Quality Predictor</title>
 
   <!-- SunCalc for accurate solar position / sunrise + sunset times -->
   <script src="https://cdn.jsdelivr.net/npm/suncalc@1.9.0/suncalc.js"></script>
@@ -150,9 +150,53 @@
       background: var(--text-muted);
       flex: 0 0 auto;
     }
-    .status-dot.approx { background: var(--ok); }
-    .status-dot.exact  { background: var(--good); }
-    .status-dot.error  { background: var(--poor); }
+    .status-dot.approx   { background: var(--ok); }
+    .status-dot.exact    { background: var(--good); }
+    .status-dot.searched { background: var(--focus-ring); }
+    .status-dot.error    { background: var(--poor); }
+
+    /* --- Location search --------------------------------------------- */
+    .location-search { margin-top: var(--gap); }
+    .location-search label {
+      display: block;
+      font-weight: 600;
+      color: var(--text-strong);
+      margin-bottom: 0.4rem;
+    }
+    .search-row { display: flex; flex-wrap: wrap; gap: 0.6rem; }
+    #loc-input {
+      flex: 1 1 14rem;
+      min-height: var(--touch);
+      padding: 0.55rem 0.85rem;
+      font-size: 1rem; /* >=16px avoids mobile zoom-on-focus */
+      color: var(--text-main);
+      background: var(--bg-dark);
+      border: 1px solid var(--card-border);
+      border-radius: var(--radius);
+    }
+    #loc-input::placeholder { color: var(--text-muted); }
+    .search-results {
+      list-style: none;
+      margin: 0.75rem 0 0;
+      padding: 0;
+      display: grid;
+      gap: 0.4rem;
+    }
+    .search-results:empty { margin: 0; }
+    .search-results button {
+      font: inherit;
+      width: 100%;
+      text-align: left;
+      cursor: pointer;
+      min-height: var(--touch);
+      padding: 0.6rem 0.9rem;
+      color: var(--text-main);
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: var(--radius);
+    }
+    .search-results button:hover { border-color: var(--accent-gold); }
+    .search-msg { color: var(--text-muted); margin: 0.6rem 0 0; }
 
     button.btn {
       font: inherit;
@@ -218,6 +262,22 @@
       accent-color: var(--accent-gold);
       flex: 0 0 auto;
     }
+    .mode-gloss { color: var(--text-muted); font-weight: 400; }
+
+    /* --- About the name (Buckminster Fuller) ------------------------- */
+    .about-name p { margin: 0 0 0.85rem; }
+    .about-name p:last-child { margin-bottom: 0; }
+    .about-name blockquote {
+      margin: 0 0 1rem;
+      padding: 0.75rem 1.25rem;
+      border-left: 4px solid var(--accent-gold);
+      color: var(--text-main);
+      font-style: italic;
+    }
+    .about-name ul { margin: 0.25rem 0 0; padding-left: 1.25rem; }
+    .about-name li { margin-bottom: 0.35rem; }
+    .about-name a { color: var(--focus-ring); }
+    .term { color: var(--accent-gold); font-weight: 600; font-style: normal; }
 
     /* --- Cards / sections -------------------------------------------- */
     main .wrapper { display: grid; gap: var(--gap); }
@@ -432,10 +492,13 @@
 
   <header>
     <div class="wrapper">
-      <h1>Sunset &amp; Sunrise Quality Predictor</h1>
+      <h1>Sunclipse</h1>
       <p class="tagline">
-        A rating from 0&nbsp;to&nbsp;100 for the next sunset or sunrise, based on your
-        location and live cloud data. Fully keyboard-accessible and screen-reader friendly.
+        Predicting brilliant <strong>sunsights</strong> and <strong>sunclipses</strong> &mdash;
+        Buckminster Fuller&rsquo;s words for what we call sunrise and sunset.
+        A rating from 0&nbsp;to&nbsp;100 for the next event, from your location and live
+        cloud data. Fully keyboard-accessible and screen-reader friendly.
+        <a href="#about-name">Why these words?</a>
       </p>
 
       <nav class="location-bar" aria-label="Location controls">
@@ -452,25 +515,43 @@
           <span>Use Precise GPS</span>
         </button>
       </nav>
+
+      <form class="location-search" id="loc-form" role="search">
+        <label for="loc-input">Search for a town or place</label>
+        <div class="search-row">
+          <input type="text" id="loc-input" name="q" autocomplete="off"
+                 autocapitalize="words" spellcheck="false"
+                 placeholder="e.g. Ottawa, Ontario"
+                 aria-describedby="loc-hint">
+          <button type="submit" class="btn" id="loc-search-btn">
+            <span aria-hidden="true">🔎</span>
+            <span>Search</span>
+          </button>
+        </div>
+        <p class="search-msg" id="loc-hint">
+          Type a place name to check its next sunsight or sunclipse.
+        </p>
+        <ul class="search-results" id="loc-results" aria-label="Search results"></ul>
+      </form>
     </div>
   </header>
 
   <main id="main">
     <div class="wrapper">
 
-      <!-- Sunset / sunrise mode toggle -->
+      <!-- Sunsight / sunclipse mode toggle -->
       <fieldset class="mode-toggle">
         <legend>What are you planning to watch?</legend>
         <div class="mode-options">
           <label>
             <input type="radio" name="mode" value="sunset" checked>
             <span aria-hidden="true">🌇</span>
-            <span>Sunset</span>
+            <span>Sunclipse <span class="mode-gloss">(sunset)</span></span>
           </label>
           <label>
             <input type="radio" name="mode" value="sunrise">
             <span aria-hidden="true">🌅</span>
-            <span>Sunrise</span>
+            <span>Sunsight <span class="mode-gloss">(sunrise)</span></span>
           </label>
         </div>
       </fieldset>
@@ -612,6 +693,47 @@
         </div>
       </section>
 
+      <!-- ============ About the name ============ -->
+      <section class="card about-name" id="about-name" aria-labelledby="about-heading">
+        <h2 id="about-heading">Why &ldquo;sunsight&rdquo; and &ldquo;sunclipse&rdquo;?</h2>
+        <p>
+          The designer and thinker <a href="https://buckminsterfuller.net/">Buckminster
+          Fuller</a> refused to say <em>sunrise</em> and <em>sunset</em>. Those words, he
+          argued, carry a pre-Copernican picture of the world &mdash; as if the Sun rose
+          and fell around a stationary Earth. It doesn&rsquo;t. The Earth turns.
+        </p>
+        <blockquote>
+          The gist of his reasoning: our everyday language still says the Sun moves,
+          centuries after we learned that we are the ones spinning. Fuller wanted words
+          that match reality, so he coined his own.
+        </blockquote>
+        <p>He replaced them with two words built from what actually happens:</p>
+        <ul>
+          <li>
+            <span class="term">Sunsight</span> &mdash; the moment your part of the turning
+            Earth rotates far enough for the Sun to come into sight (what we call sunrise).
+          </li>
+          <li>
+            <span class="term">Sunclipse</span> &mdash; the moment the Sun is eclipsed by
+            the Earth&rsquo;s horizon as you rotate away from it (what we call sunset).
+          </li>
+        </ul>
+        <p>
+          He reformed other words the same way &mdash; preferring <em>&ldquo;in&rdquo;</em>
+          and <em>&ldquo;out&rdquo;</em> to <em>&ldquo;up&rdquo;</em> and
+          <em>&ldquo;down&rdquo;</em>, since gravity pulls toward the Earth&rsquo;s centre,
+          not &ldquo;down&rdquo; in any absolute sense. This little tool borrows his
+          vocabulary: it predicts how vivid the next sunsight or sunclipse is likely to be.
+        </p>
+        <p class="card-note">
+          Read more:
+          <a href="https://en.wikipedia.org/wiki/Buckminster_Fuller">Buckminster Fuller (Wikipedia)</a> &middot;
+          <a href="https://buckminsterfuller.net/">Buckminster Fuller Institute</a> &middot;
+          <a href="https://evangriffithnotes.com/celebrating-word-making-buckminster/">Celebrating word-making Buckminster (Evan Griffith)</a> &middot;
+          <a href="https://pastdaily.com/buckminster-fuller-has-a-few-words-for-you-1972-ford-hall-forum-lecture-past-daily-weekend-gallimaufry/">Fuller&rsquo;s 1972 Ford Hall Forum lecture (Past Daily)</a>
+        </p>
+      </section>
+
     </div>
   </main>
 
@@ -623,6 +745,10 @@
         <a href="https://open-meteo.com/">Open-Meteo</a>. Solar times by
         <a href="https://github.com/mourner/suncalc">SunCalc</a>.
         Predictions are a guide, not a guarantee &mdash; skies change fast.
+      </p>
+      <p>
+        Named for Buckminster Fuller&rsquo;s <em>sunsight</em> and <em>sunclipse</em>.
+        Open source at <a href="https://github.com/mgifford/sunclipse">github.com/mgifford/sunclipse</a>.
       </p>
     </div>
   </footer>
@@ -640,6 +766,10 @@
       statusDot:    document.getElementById("status-dot"),
       statusText:   document.getElementById("status-text"),
       gpsBtn:       document.getElementById("gps-btn"),
+      locForm:      document.getElementById("loc-form"),
+      locInput:     document.getElementById("loc-input"),
+      locResults:   document.getElementById("loc-results"),
+      locHint:      document.getElementById("loc-hint"),
       alert:        document.getElementById("app-alert"),
 
       scoreSection: document.getElementById("score-section"),
@@ -677,6 +807,7 @@
     // Shared state
     var state = {
       mode: "sunset",     // "sunset" | "sunrise"
+      modeExplicit: false, // true once the user picks a mode by hand
       lat: null,
       lon: null,
       event: null,        // Date of the next sunset/sunrise
@@ -686,7 +817,9 @@
     };
 
     function isSunrise() { return state.mode === "sunrise"; }
-    function eventWord() { return isSunrise() ? "sunrise" : "sunset"; }
+    // Fuller's coinages: "sunsight" for sunrise, "sunclipse" for sunset.
+    function eventWord() { return isSunrise() ? "sunsight" : "sunclipse"; }
+    function plainWord() { return isSunrise() ? "sunrise" : "sunset"; }
     function horizonWord() { return isSunrise() ? "eastern" : "western"; }
 
     /* ============================================================
@@ -769,7 +902,7 @@
     }
 
     function categoryFor(score) {
-      var kind = isSunrise() ? "Sunrise" : "Sunset";
+      var kind = isSunrise() ? "Sunsight" : "Sunclipse";
       if (score >= 90) return { label: "Vivid Burn Expected", cls: "vivid" };
       if (score >= 70) return { label: "High Quality " + kind, cls: "high" };
       if (score >= 45) return { label: "Moderate / Average View", cls: "moderate" };
@@ -873,8 +1006,8 @@
           },
           {
             time: ev,
-            label: "Astronomical Sunrise",
-            desc: "The sun crosses the true horizon."
+            label: "Sunsight",
+            desc: "The sun comes into sight over the true horizon (astronomical sunrise)."
           },
           {
             time: addMinutes(ev, 15 + t),
@@ -902,8 +1035,8 @@
         },
         {
           time: ev,
-          label: "Astronomical Sunset",
-          desc: "The sun crosses the true horizon."
+          label: "Sunclipse",
+          desc: "The sun is eclipsed by the true horizon (astronomical sunset)."
         },
         {
           time: addMinutes(ev, 10),
@@ -1152,6 +1285,43 @@
     /* ============================================================
        Location strategy
     ============================================================ */
+
+    // Choose the event the viewer would be looking for NEXT: whichever of the
+    // upcoming sunsight or sunclipse comes sooner. Before dawn -> sunsight;
+    // during the day -> that evening's sunclipse; after dusk -> tomorrow's
+    // sunsight. Skipped once the viewer picks a mode by hand.
+    function pickDefaultMode(lat, lon) {
+      var now = new Date();
+      var today = SunCalc.getTimes(now, lat, lon);
+      var tmrw = SunCalc.getTimes(new Date(now.getTime() + 86400000), lat, lon);
+      var soonest = function (a, b) {
+        return (a instanceof Date && !isNaN(a.getTime()) && a.getTime() > now.getTime()) ? a : b;
+      };
+      var toMs = function (d) {
+        return (d instanceof Date && !isNaN(d.getTime())) ? d.getTime() : Infinity;
+      };
+      var nextSunrise = soonest(today.sunrise, tmrw.sunrise);
+      var nextSunset  = soonest(today.sunset,  tmrw.sunset);
+      return toMs(nextSunrise) <= toMs(nextSunset) ? "sunrise" : "sunset";
+    }
+
+    function syncModeRadios() {
+      var r = document.querySelector('input[name="mode"][value="' + state.mode + '"]');
+      if (r) r.checked = true;
+    }
+
+    // Single entry point for every location source (IP, GPS, search).
+    function setLocation(lat, lon) {
+      state.lat = lat;
+      state.lon = lon;
+      if (!state.modeExplicit && typeof SunCalc !== "undefined") {
+        state.mode = pickDefaultMode(lat, lon);
+        state.lastSrMinute = null;
+        syncModeRadios();
+      }
+      runPrediction(lat, lon);
+    }
+
     function loadByIp() {
       setStatus("Detecting your approximate location…", null);
       fetchJson("https://ipapi.co/json/")
@@ -1161,53 +1331,140 @@
             var place = [data.city, data.region, data.country_name]
               .filter(Boolean).join(", ");
             setStatus("Approximate (IP)" + (place ? " — " + place : ""), "approx");
-            runPrediction(data.latitude, data.longitude);
+            setLocation(data.latitude, data.longitude);
           } else {
             throw new Error("no coordinates returned");
           }
         })
         .catch(function () {
-          setStatus("Location unavailable — try precise GPS", "error");
+          setStatus("Location unavailable — search or use GPS", "error");
           setAlert("We couldn’t detect your approximate location automatically. " +
-                   "Use the “Use Precise GPS” button to continue.", true);
+                   "Search for your town below, or use the “Use Precise GPS” button.", true);
         });
     }
 
     function loadByGps() {
       if (!("geolocation" in navigator)) {
-        setAlert("This browser doesn’t support precise geolocation.", true);
+        setAlert("This browser doesn’t support precise geolocation. " +
+                 "Search for your town instead.", true);
         return;
       }
       el.gpsBtn.disabled = true;
       setStatus("Requesting precise location…", null);
 
-      navigator.geolocation.getCurrentPosition(
-        function (pos) {
-          el.gpsBtn.disabled = false;
-          setStatus("Exact (GPS)", "exact");
-          runPrediction(pos.coords.latitude, pos.coords.longitude);
-        },
-        function (err) {
-          el.gpsBtn.disabled = false;
-          var msg = err.code === err.PERMISSION_DENIED
-            ? "Precise location was denied. Showing the approximate result instead."
-            : "Couldn’t get a precise fix. Showing the approximate result instead.";
-          setStatus(state.lat ? "Approximate (IP)" : "Location unavailable",
-                    state.lat ? "approx" : "error");
-          setAlert(msg, true);
-          if (state.lat != null) {
-            setTimeout(hideAlert, 4000); // keep the existing prediction visible
+      // Try GPS-grade accuracy first; if it times out or is unavailable (common
+      // on desktops with no GPS), retry once with faster network-based location.
+      var attempt = function (highAccuracy, isRetry) {
+        navigator.geolocation.getCurrentPosition(
+          function (pos) {
+            el.gpsBtn.disabled = false;
+            setStatus("Exact (GPS)", "exact");
+            hideAlert();
+            setLocation(pos.coords.latitude, pos.coords.longitude);
+          },
+          function (err) {
+            if (!isRetry && err.code !== err.PERMISSION_DENIED) {
+              setStatus("Retrying with network location…", null);
+              attempt(false, true);
+              return;
+            }
+            el.gpsBtn.disabled = false;
+            var msg;
+            if (err.code === err.PERMISSION_DENIED) {
+              msg = "Precise location is blocked for this site. Allow location in " +
+                    "your browser’s site settings, or search for your town below.";
+            } else if (err.code === err.POSITION_UNAVAILABLE) {
+              msg = "Your device couldn’t determine a location — often no GPS " +
+                    "hardware, or location services are switched off. Try searching " +
+                    "for your town below.";
+            } else {
+              msg = "The location request timed out. Try again, or search for your " +
+                    "town below.";
+            }
+            setStatus(state.lat ? "Approximate (IP)" : "Location unavailable",
+                      state.lat ? "approx" : "error");
+            setAlert(msg, true);
+          },
+          {
+            enableHighAccuracy: highAccuracy,
+            timeout: highAccuracy ? 10000 : 20000,
+            maximumAge: highAccuracy ? 0 : 600000
           }
-        },
-        { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
-      );
+        );
+      };
+      attempt(true, false);
     }
 
     /* ============================================================
-       Mode toggle (sunset / sunrise)
+       Place search (Open-Meteo geocoding, no API key)
+    ============================================================ */
+    function searchMessage(text) {
+      el.locResults.innerHTML = "";
+      var li = document.createElement("li");
+      li.className = "search-msg";
+      li.setAttribute("role", "status");
+      li.textContent = text;
+      el.locResults.appendChild(li);
+    }
+
+    function labelFor(r) {
+      return [r.name, r.admin1, r.country].filter(Boolean).join(", ");
+    }
+
+    function renderResults(results) {
+      el.locResults.innerHTML = "";
+      if (results === null) {
+        searchMessage("Sorry, the place search is unavailable right now. Try again shortly.");
+        return;
+      }
+      if (!results.length) {
+        searchMessage("No matching places found. Try a different spelling or add a region.");
+        return;
+      }
+      var status = document.createElement("li");
+      status.className = "visually-hidden";
+      status.setAttribute("role", "status");
+      status.textContent = results.length + " place" +
+        (results.length === 1 ? "" : "s") + " found. Choose one.";
+      el.locResults.appendChild(status);
+
+      results.forEach(function (r) {
+        if (typeof r.latitude !== "number" || typeof r.longitude !== "number") return;
+        var label = labelFor(r);
+        var li = document.createElement("li");
+        var btn = document.createElement("button");
+        btn.type = "button";
+        btn.textContent = label;
+        btn.addEventListener("click", function () {
+          el.locInput.value = label;
+          el.locResults.innerHTML = "";
+          setStatus("Location: " + label, "searched");
+          hideAlert();
+          setLocation(r.latitude, r.longitude);
+        });
+        li.appendChild(btn);
+        el.locResults.appendChild(li);
+      });
+    }
+
+    function onSearchSubmit(e) {
+      e.preventDefault();
+      var q = el.locInput.value.trim();
+      if (!q) { el.locInput.focus(); return; }
+      searchMessage("Searching…");
+      var url = "https://geocoding-api.open-meteo.com/v1/search?name=" +
+                encodeURIComponent(q) + "&count=6&language=en&format=json";
+      fetchJson(url)
+        .then(function (data) { renderResults((data && data.results) || []); })
+        .catch(function () { renderResults(null); });
+    }
+
+    /* ============================================================
+       Mode toggle (sunsight / sunclipse)
     ============================================================ */
     function onModeChange(e) {
       state.mode = e.target.value === "sunrise" ? "sunrise" : "sunset";
+      state.modeExplicit = true; // viewer chose; stop auto-defaulting
       state.lastSrMinute = null;
       if (state.lat != null && state.lon != null) {
         runPrediction(state.lat, state.lon); // re-fetch: horizon point differs
@@ -1218,6 +1475,7 @@
        Wire up & go
     ============================================================ */
     el.gpsBtn.addEventListener("click", loadByGps);
+    el.locForm.addEventListener("submit", onSearchSubmit);
     el.terrainSlider.addEventListener("input", onTerrainChange);
     Array.prototype.forEach.call(
       document.querySelectorAll('input[name="mode"]'),
