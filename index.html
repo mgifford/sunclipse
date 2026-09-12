@@ -708,8 +708,9 @@
             </p>
             <dl>
               <div class="metric"><dt>Sun direction</dt><dd id="m-direction">–</dd></div>
-              <div class="metric"><dt>Low cloud (&lt;2&nbsp;km)</dt><dd id="m-west">–</dd></div>
+              <div class="metric"><dt>Low cloud (blended)</dt><dd id="m-west">–</dd></div>
             </dl>
+            <p class="card-note" id="corridor-note"></p>
           </div>
 
           <div class="data-card" role="group" aria-labelledby="oc-title" aria-describedby="oc-desc">
@@ -845,6 +846,7 @@
       wcDesc:     document.getElementById("wc-desc"),
       mDirection: document.getElementById("m-direction"),
       mWest:      document.getElementById("m-west"),
+      corridorNote: document.getElementById("corridor-note"),
       mMid:       document.getElementById("m-mid"),
       mHigh:      document.getElementById("m-high"),
       mTotal:     document.getElementById("m-total"),
@@ -865,6 +867,7 @@
       bearing: null,      // sun's compass bearing (deg) at the event
       bearingCardinal: null, // e.g. "WSW"
       currentLabel: null, // human label for the current location, if known
+      corridor: null,     // [{dist, low}] samples toward the sun
       terrainOffset: 0,   // minutes to shift (0..20)
       countdownTimer: null,
       lastSrMinute: null
@@ -1060,13 +1063,20 @@
       var card = state.bearingCardinal || (isSunrise() ? "E" : "W");
       el.wcTitle.textContent = card + " Horizon (toward the sun)";
       el.wcDesc.textContent =
-        "Low cloud roughly 150 km toward the " + card +
-        " horizon, where the sun’s light enters the scene. Clear here lets " +
-        "colour through.";
+        "Low cloud sampled along the corridor toward the " + card +
+        " horizon, where the sun’s light skims in. Clear here lets colour through.";
       el.mDirection.textContent = (state.bearing !== null)
         ? Math.round(state.bearing) + "° " + state.bearingCardinal
         : "n/a";
       el.mWest.textContent      = pct(m.horizonLow);
+      if (state.corridor && state.corridor.length) {
+        el.corridorNote.textContent = "Along the way — " +
+          state.corridor.map(function (s) {
+            return s.dist + " km: " + (s.low === null ? "n/a" : pct(s.low));
+          }).join(" · ");
+      } else {
+        el.corridorNote.textContent = "";
+      }
       el.mMid.textContent       = pct(m.mid);
       el.mHigh.textContent      = pct(m.high);
       el.mTotal.textContent     = pct(m.total);
@@ -1284,6 +1294,15 @@
       return bestIdx;
     }
 
+    // Sample low cloud at several points ALONG the corridor toward the sun, not
+    // just one distant point. Low-angle light skims the whole path, and the far
+    // end matters most, so weight it heaviest.
+    var CORRIDOR = [
+      { dist: 50,  weight: 0.20 },
+      { dist: 100, weight: 0.30 },
+      { dist: 150, weight: 0.50 }
+    ];
+
     function buildForecastUrls(lat, lon) {
       // forecast_days=2 so the "next" event can fall on tomorrow (e.g. an
       // evening visit asking about tomorrow's sunrise).
@@ -1292,17 +1311,21 @@
       var mainUrl = "https://api.open-meteo.com/v1/forecast?latitude=" +
                     lat + "&longitude=" + lon + "&" + params;
 
-      // Sunward horizon sample point, ~150 km along the sun's TRUE bearing at
-      // the event (not just due west/east) — that's where the low light skims
-      // in from. Falls back to due west/east until the bearing is known.
+      // Corridor points along the sun's TRUE bearing at the event (not just due
+      // west/east). Falls back to due west/east until the bearing is known.
       var bearing = (state.bearing !== null)
         ? state.bearing
         : (isSunrise() ? 90 : 270);
-      var h = offsetPoint(lat, lon, bearing, 150);
-      var horizonUrl = "https://api.open-meteo.com/v1/forecast?latitude=" +
-                    h.lat + "&longitude=" + h.lon +
-                    "&hourly=cloud_cover_low&forecast_days=2";
-      return { mainUrl: mainUrl, horizonUrl: horizonUrl };
+      var corridor = CORRIDOR.map(function (pt) {
+        var p = offsetPoint(lat, lon, bearing, pt.dist);
+        return {
+          dist: pt.dist,
+          weight: pt.weight,
+          url: "https://api.open-meteo.com/v1/forecast?latitude=" + p.lat +
+               "&longitude=" + p.lon + "&hourly=cloud_cover_low&forecast_days=2"
+        };
+      });
+      return { mainUrl: mainUrl, corridor: corridor };
     }
 
     function fetchJson(url) {
@@ -1337,18 +1360,34 @@
       setAlert("Loading atmospheric data for the next " + eventWord() + "…", false);
 
       var urls = buildForecastUrls(lat, lon);
-      Promise.all([fetchJson(urls.mainUrl), fetchJson(urls.horizonUrl)])
+      var fetches = [fetchJson(urls.mainUrl)].concat(
+        urls.corridor.map(function (c) { return fetchJson(c.url); })
+      );
+      Promise.all(fetches)
         .then(function (results) {
-          var main = results[0], horizon = results[1];
+          var main = results[0];
           if (!main.hourly || !main.hourly.time) {
             throw new Error("Unexpected weather response.");
           }
           var idx = nearestHourIndex(main.hourly.time, state.event);
-          var hIdx = horizon.hourly && horizon.hourly.time
-            ? nearestHourIndex(horizon.hourly.time, state.event) : idx;
+
+          // Blend the corridor's low-cloud samples (weighted, skipping gaps).
+          var samples = [], acc = 0, wSum = 0;
+          urls.corridor.forEach(function (c, i) {
+            var resp = results[i + 1];
+            var low = null;
+            if (resp && resp.hourly && resp.hourly.time) {
+              low = num(resp.hourly.cloud_cover_low,
+                        nearestHourIndex(resp.hourly.time, state.event));
+            }
+            samples.push({ dist: c.dist, low: low });
+            if (low !== null) { acc += low * c.weight; wSum += c.weight; }
+          });
+          state.corridor = samples;
+          var horizonLow = wSum > 0 ? acc / wSum : null;
 
           var m = {
-            horizonLow:   num(horizon.hourly && horizon.hourly.cloud_cover_low, hIdx),
+            horizonLow:   horizonLow,
             localLow:     num(main.hourly.cloud_cover_low, idx),
             mid:          num(main.hourly.cloud_cover_mid, idx),
             high:         num(main.hourly.cloud_cover_high, idx),
