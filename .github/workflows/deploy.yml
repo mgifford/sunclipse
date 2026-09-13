@@ -1,0 +1,53 @@
+name: Deploy to GitHub Pages
+
+# Builds the site by injecting the CARTO_API secret into index.html, then
+# publishes to GitHub Pages. NOTE: the injected key is public in the served
+# page — protect it by restricting the CARTO key to this site's domain in the
+# CARTO dashboard. The secret only keeps the literal out of the git history.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deployment at a time; let an in-progress run finish.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assemble site and inject CARTO key
+        env:
+          CARTO_API: ${{ secrets.CARTO_API }}
+        run: |
+          mkdir -p _site
+          # Only index.html is needed on Pages. Substitute the placeholder with
+          # the secret using a Perl one-liner (handles keys with & or / safely).
+          KEY="$CARTO_API" perl -pe 's/__CARTO_API_KEY__/$ENV{KEY}/g' index.html > _site/index.html
+          if [ -z "$CARTO_API" ]; then
+            echo "::warning::CARTO_API secret is empty — the map will fall back to keyless Esri imagery."
+          fi
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

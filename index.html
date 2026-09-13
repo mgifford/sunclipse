@@ -18,6 +18,15 @@
   <!-- SunCalc for accurate solar position / sunrise + sunset times -->
   <script src="https://cdn.jsdelivr.net/npm/suncalc@1.9.0/suncalc.js"></script>
 
+  <!--
+    Optional CARTO basemap key for the satellite map. The deploy workflow
+    replaces the placeholder below with the CARTO_API secret. If it stays a
+    placeholder (raw file, or no secret set), the map falls back to keyless
+    Esri imagery. NOTE: this key is PUBLIC in the served page — protect it by
+    restricting it to your domain in the CARTO dashboard, not by hiding it.
+  -->
+  <script>window.SUNCLIPSE_CARTO_KEY = "__CARTO_API_KEY__";</script>
+
   <style>
     /* ---------------------------------------------------------------
        Design tokens (WCAG 2.2 AA high-contrast dark theme)
@@ -2051,12 +2060,27 @@
     function initMap() {
       var map = L.map("cloud-map", { scrollWheelZoom: false })
                  .setView([state.lat, state.lon], 8);
-      // Keyless satellite ground imagery (Esri World Imagery) — a real
-      // "satellite view of where you are", dark enough to match the theme.
-      L.tileLayer(
-        "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-        { maxZoom: 19, attribution: "Imagery © Esri, Maxar, Earthstar Geographics" }
-      ).addTo(map);
+
+      // Base layer: use CARTO's map when a key was injected at deploy;
+      // otherwise fall back to keyless Esri satellite imagery so the raw
+      // file (no build, no secret) still works.
+      var k = window.SUNCLIPSE_CARTO_KEY;
+      var hasCarto = k && k.charAt(0) !== "_"; // "__CARTO_API_KEY__" = not set
+      var baseAttrib;
+      if (hasCarto) {
+        L.tileLayer(
+          "https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png?key=" +
+            encodeURIComponent(k),
+          { maxZoom: 20, attribution: "© OpenStreetMap contributors © CARTO" }
+        ).addTo(map);
+        baseAttrib = "base map © OpenStreetMap, © CARTO";
+      } else {
+        L.tileLayer(
+          "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+          { maxZoom: 19, attribution: "Imagery © Esri, Maxar, Earthstar Geographics" }
+        ).addTo(map);
+        baseAttrib = "imagery © Esri, Maxar, Earthstar Geographics";
+      }
       state.map = map;
 
       // Live infrared cloud overlay (RainViewer, keyless). Non-fatal if it fails.
@@ -2070,7 +2094,7 @@
               data.host + last.path + "/512/{z}/{x}/{y}/0/0_0.png",
               { opacity: 0.6, maxZoom: 18 }
             ).addTo(map);
-            el.mapAttrib.textContent = "Clouds © RainViewer · imagery © Esri, Maxar, Earthstar Geographics.";
+            el.mapAttrib.textContent = "Clouds © RainViewer · " + baseAttrib + ".";
             el.mapAttrib.hidden = false;
           }
         })

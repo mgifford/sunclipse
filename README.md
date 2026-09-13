@@ -101,6 +101,19 @@ It's one static file. Upload `index.html` to any web host and open it.
 To drop the SunCalc CDN dependency, save `suncalc.js` next to `index.html` and
 change the `<script src="…">` tag to `src="suncalc.js"`.
 
+### Optional: CARTO basemap key
+
+The satellite map works with **no key** (keyless Esri imagery). To use CARTO's
+basemap instead, the repo includes a GitHub Actions workflow
+(`.github/workflows/deploy.yml`) that injects a `CARTO_API` repository secret
+into `index.html` at deploy time; without the secret it falls back to Esri. To
+enable it: add the secret under **Settings → Secrets and variables → Actions**,
+set **Settings → Pages → Source** to **GitHub Actions**, and push.
+
+⚠️ The key is **public** in the served page — a browser map can't hide it.
+Restrict the CARTO key to your site's domain in the CARTO dashboard; the secret
+only keeps the literal out of the git history.
+
 ## Licence
 
 [GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0). Fork freely,
