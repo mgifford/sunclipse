@@ -2051,11 +2051,12 @@
     function initMap() {
       var map = L.map("cloud-map", { scrollWheelZoom: false })
                  .setView([state.lat, state.lon], 8);
-      // Dark base map to match the theme.
-      L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png", {
-        subdomains: "abcd", maxZoom: 18,
-        attribution: "© OpenStreetMap contributors © CARTO"
-      }).addTo(map);
+      // Keyless satellite ground imagery (Esri World Imagery) — a real
+      // "satellite view of where you are", dark enough to match the theme.
+      L.tileLayer(
+        "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+        { maxZoom: 19, attribution: "Imagery © Esri, Maxar, Earthstar Geographics" }
+      ).addTo(map);
       state.map = map;
 
       // Live infrared cloud overlay (RainViewer, keyless). Non-fatal if it fails.
@@ -2069,7 +2070,7 @@
               data.host + last.path + "/512/{z}/{x}/{y}/0/0_0.png",
               { opacity: 0.6, maxZoom: 18 }
             ).addTo(map);
-            el.mapAttrib.textContent = "Clouds © RainViewer · base map © OpenStreetMap, © CARTO.";
+            el.mapAttrib.textContent = "Clouds © RainViewer · imagery © Esri, Maxar, Earthstar Geographics.";
             el.mapAttrib.hidden = false;
           }
         })
