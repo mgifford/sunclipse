@@ -2068,8 +2068,10 @@
       var hasCarto = k && k.charAt(0) !== "_"; // "__CARTO_API_KEY__" = not set
       var baseAttrib;
       if (hasCarto) {
+        // Dark CARTO style: matches the app theme AND lets the whitish
+        // infrared cloud overlay stand out (it's invisible on a light base).
         L.tileLayer(
-          "https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png?key=" +
+          "https://basemaps.cartocdn.com/rastertiles/dark_matter/{z}/{x}/{y}.png?key=" +
             encodeURIComponent(k),
           { maxZoom: 20, attribution: "© OpenStreetMap contributors © CARTO" }
         ).addTo(map);
@@ -2083,22 +2085,32 @@
       }
       state.map = map;
 
-      // Live infrared cloud overlay (RainViewer, keyless). Non-fatal if it fails.
+      // Live infrared cloud overlay (RainViewer, keyless). Non-fatal if it fails;
+      // a failure is surfaced in the attribution note rather than left silent.
+      var noClouds = function () {
+        el.mapAttrib.textContent =
+          "Live cloud layer unavailable right now — base map only. " + baseAttrib + ".";
+        el.mapAttrib.hidden = false;
+      };
       fetch("https://api.rainviewer.com/public/weather-maps.json")
         .then(function (r) { return r.ok ? r.json() : null; })
         .then(function (data) {
           var frames = data && data.satellite && data.satellite.infrared;
-          if (data && data.host && frames && frames.length) {
-            var last = frames[frames.length - 1];
-            state.mapLayers.cloud = L.tileLayer(
-              data.host + last.path + "/512/{z}/{x}/{y}/0/0_0.png",
-              { opacity: 0.6, maxZoom: 18 }
-            ).addTo(map);
-            el.mapAttrib.textContent = "Clouds © RainViewer · " + baseAttrib + ".";
-            el.mapAttrib.hidden = false;
-          }
+          if (!data || !data.host || !frames || !frames.length) { noClouds(); return; }
+          var last = frames[frames.length - 1];
+          // 256 px tiles (universally served; 512 satellite tiles can 404).
+          var layer = L.tileLayer(
+            data.host + last.path + "/256/{z}/{x}/{y}/0/0_0.png",
+            { opacity: 0.8, maxZoom: 18 }
+          );
+          var errs = 0;
+          layer.on("tileerror", function () { if (++errs === 4) noClouds(); });
+          layer.addTo(map);
+          state.mapLayers.cloud = layer;
+          el.mapAttrib.textContent = "Clouds © RainViewer · " + baseAttrib + ".";
+          el.mapAttrib.hidden = false;
         })
-        .catch(function () {});
+        .catch(noClouds);
 
       updateMap();
     }
