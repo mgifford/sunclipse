@@ -508,6 +508,28 @@
 
     .card-note { color: var(--text-muted); font-size: 0.9rem; margin: 0.75rem 0 0; }
 
+    /* --- Satellite cloud map ----------------------------------------- */
+    .cloud-map {
+      height: 24rem;
+      max-height: 70vh;
+      margin-top: 1rem;
+      border: 1px solid var(--card-border);
+      border-radius: var(--radius);
+      background: var(--bg-dark);
+    }
+    /* Keep Leaflet's UI legible on the dark theme */
+    .cloud-map .leaflet-bar a {
+      background: var(--card-bg);
+      color: var(--text-main);
+      border-bottom-color: var(--card-border);
+    }
+    .cloud-map .leaflet-bar a:hover { background: var(--card-border); }
+    .cloud-map .leaflet-control-attribution {
+      background: rgba(15, 23, 42, 0.85);
+      color: var(--text-muted);
+    }
+    .cloud-map .leaflet-control-attribution a { color: var(--focus-ring); }
+
     /* --- Alerts ------------------------------------------------------ */
     .alert {
       border-radius: var(--radius);
@@ -767,6 +789,24 @@
         </div>
       </section>
 
+      <!-- ============ Satellite cloud map ============ -->
+      <section class="card" id="map-section" aria-labelledby="map-heading" hidden>
+        <h2 id="map-heading">Satellite cloud map</h2>
+        <p class="card-note" id="map-note">
+          A visual overlay of current clouds around you, with your location and
+          the direction of the sun. The cloud figures above are the accessible
+          summary; this map is an optional extra and only loads when you open it.
+        </p>
+        <button type="button" class="btn" id="map-toggle"
+                aria-expanded="false" aria-controls="cloud-map">
+          <span aria-hidden="true">🛰️</span>
+          <span id="map-toggle-text">Show satellite cloud map</span>
+        </button>
+        <div id="cloud-map" class="cloud-map" role="group"
+             aria-label="Satellite cloud map (visual)" hidden></div>
+        <p class="card-note" id="map-attrib" hidden></p>
+      </section>
+
       <!-- ============ About the name ============ -->
       <section class="card about-name" id="about-name" aria-labelledby="about-heading">
         <h2 id="about-heading">Why &ldquo;sunsight&rdquo; and &ldquo;sunclipse&rdquo;?</h2>
@@ -873,6 +913,11 @@
       terrainSlider:  document.getElementById("terrain-slider"),
       terrainReadout: document.getElementById("terrain-readout"),
 
+      mapSection: document.getElementById("map-section"),
+      mapToggle:  document.getElementById("map-toggle"),
+      mapToggleText: document.getElementById("map-toggle-text"),
+      map:        document.getElementById("cloud-map"),
+      mapAttrib:  document.getElementById("map-attrib"),
       dataSection: document.getElementById("data-section"),
       dataNote:   document.getElementById("data-note"),
       wcTitle:    document.getElementById("wc-title"),
@@ -907,6 +952,9 @@
       elevation: null,    // ground elevation (m) from the forecast
       tz: null,           // IANA timezone of the location (for display)
       tzOffsetSec: 0,     // location's UTC offset (s) for hour matching
+      map: null,          // Leaflet map instance (lazy)
+      mapLayers: {},      // observer marker, sun line, cloud overlay
+      leaflet: 0,         // 0 not loaded, 1 loading, 2 ready
       terrainOffset: 0,   // minutes to shift (0..20)
       countdownTimer: null,
       lastSrMinute: null
@@ -1588,6 +1636,8 @@
           renderSky();
           renderSinceLast(recordVisit(lat, lon, score));
           el.terrainSection.hidden = false;
+          el.mapSection.hidden = false;
+          if (state.map) updateMap(); // refresh markers if the map is open
           startCountdown();
         })
         .catch(function (err) {
@@ -1960,6 +2010,115 @@
     }
 
     /* ============================================================
+       Satellite cloud map (Leaflet, lazy-loaded on first open)
+    ============================================================ */
+    var LEAFLET_CSS = "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css";
+    var LEAFLET_JS  = "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js";
+
+    // Load Leaflet's CSS + JS once, then call cb. Nothing downloads until the
+    // viewer actually opens the map.
+    function ensureLeaflet(cb) {
+      if (state.leaflet === 2 || window.L) { state.leaflet = 2; cb(); return; }
+      if (state.leaflet === 1) {           // already loading — wait for it
+        var wait = setInterval(function () {
+          if (window.L) { clearInterval(wait); state.leaflet = 2; cb(); }
+        }, 100);
+        return;
+      }
+      state.leaflet = 1;
+      var link = document.createElement("link");
+      link.rel = "stylesheet";
+      link.href = LEAFLET_CSS;
+      document.head.appendChild(link);
+      var s = document.createElement("script");
+      s.src = LEAFLET_JS;
+      s.onload = function () { state.leaflet = 2; cb(); };
+      s.onerror = function () {
+        state.leaflet = 0;
+        setAlert("Couldn’t load the map library. The cloud figures above still " +
+                 "have everything the score uses.", true);
+      };
+      document.head.appendChild(s);
+    }
+
+    function initMap() {
+      var map = L.map("cloud-map", { scrollWheelZoom: false })
+                 .setView([state.lat, state.lon], 8);
+      // Dark base map to match the theme.
+      L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png", {
+        subdomains: "abcd", maxZoom: 18,
+        attribution: "© OpenStreetMap contributors © CARTO"
+      }).addTo(map);
+      state.map = map;
+
+      // Live infrared cloud overlay (RainViewer, keyless). Non-fatal if it fails.
+      fetch("https://api.rainviewer.com/public/weather-maps.json")
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (data) {
+          var frames = data && data.satellite && data.satellite.infrared;
+          if (data && data.host && frames && frames.length) {
+            var last = frames[frames.length - 1];
+            state.mapLayers.cloud = L.tileLayer(
+              data.host + last.path + "/512/{z}/{x}/{y}/0/0_0.png",
+              { opacity: 0.6, maxZoom: 18 }
+            ).addTo(map);
+            el.mapAttrib.textContent = "Clouds © RainViewer · base map © OpenStreetMap, © CARTO.";
+            el.mapAttrib.hidden = false;
+          }
+        })
+        .catch(function () {});
+
+      updateMap();
+    }
+
+    // Draw / redraw the observer marker and the line toward the sun.
+    function updateMap() {
+      var map = state.map;
+      if (!map || state.lat == null) return;
+      map.setView([state.lat, state.lon], map.getZoom() || 8);
+
+      ["observer", "sunLine", "horizon"].forEach(function (k) {
+        if (state.mapLayers[k]) { map.removeLayer(state.mapLayers[k]); state.mapLayers[k] = null; }
+      });
+
+      state.mapLayers.observer = L.circleMarker([state.lat, state.lon], {
+        radius: 7, color: "#38BDF8", weight: 2, fillColor: "#38BDF8", fillOpacity: 0.9
+      }).addTo(map).bindPopup("Your location");
+
+      if (state.bearing !== null) {
+        var h = offsetPoint(state.lat, state.lon, state.bearing, 150);
+        state.mapLayers.sunLine = L.polyline([[state.lat, state.lon], [h.lat, h.lon]], {
+          color: "#F59E0B", weight: 3, opacity: 0.9
+        }).addTo(map);
+        state.mapLayers.horizon = L.circleMarker([h.lat, h.lon], {
+          radius: 6, color: "#F59E0B", weight: 2, fillColor: "#F59E0B", fillOpacity: 0.85
+        }).addTo(map).bindPopup(
+          (isSunrise() ? "Sunsight" : "Sunclipse") + " direction: " +
+          Math.round(state.bearing) + "° " + state.bearingCardinal
+        );
+      }
+    }
+
+    function onMapToggle() {
+      if (state.lat == null) {
+        setAlert("Find a location first, then open the map.", true);
+        return;
+      }
+      var opening = el.map.hidden;
+      el.map.hidden = !opening;
+      el.mapToggle.setAttribute("aria-expanded", opening ? "true" : "false");
+      el.mapToggleText.textContent = opening ? "Hide satellite cloud map"
+                                             : "Show satellite cloud map";
+      if (!opening) return;
+      ensureLeaflet(function () {
+        if (!state.map) initMap();
+        else updateMap();
+        // Leaflet needs a nudge after the container becomes visible.
+        setTimeout(function () { if (state.map) state.map.invalidateSize(); }, 0);
+      });
+    }
+
+    /* ============================================================
        Mode toggle (sunsight / sunclipse)
     ============================================================ */
     function onModeChange(e) {
@@ -1977,6 +2136,7 @@
     el.gpsBtn.addEventListener("click", loadByGps);
     el.locForm.addEventListener("submit", onSearchSubmit);
     el.saveBtn.addEventListener("click", onSavePlace);
+    el.mapToggle.addEventListener("click", onMapToggle);
     el.terrainSlider.addEventListener("input", onTerrainChange);
     Array.prototype.forEach.call(
       document.querySelectorAll('input[name="mode"]'),
