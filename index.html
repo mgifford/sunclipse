@@ -2057,8 +2057,14 @@
       document.head.appendChild(s);
     }
 
+    // 1x1 transparent tile — replaces any tile that fails to load.
+    var BLANK_TILE = "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==";
+
     function initMap() {
-      var map = L.map("cloud-map", { scrollWheelZoom: false })
+      // Cap zoom to the band the cloud/radar overlays actually cover, so
+      // RainViewer never serves its "Zoom level not supported" placeholder
+      // tile. Regional zoom is what matters for reading the cloud field anyway.
+      var map = L.map("cloud-map", { scrollWheelZoom: false, minZoom: 3, maxZoom: 8 })
                  .setView([state.lat, state.lon], 6);
 
       // Base layer: use CARTO's map when a key was injected at deploy;
@@ -2096,7 +2102,8 @@
       };
       var rvTile = function (path, color, opts, nativeZoom, opacity) {
         return L.tileLayer(path + "/256/{z}/{x}/{y}/" + color + "/" + opts + ".png",
-          { opacity: opacity, maxNativeZoom: nativeZoom, maxZoom: 20 });
+          { opacity: opacity, maxNativeZoom: nativeZoom, maxZoom: 8,
+            errorTileUrl: BLANK_TILE });
       };
       fetch("https://api.rainviewer.com/public/weather-maps.json")
         .then(function (r) { return r.ok ? r.json() : null; })
@@ -2114,14 +2121,17 @@
           }
           var past = data.radar && data.radar.past;
           if (past && past.length) {
-            overlays["Rain radar"] =
-              rvTile(host + past[past.length - 1].path, 4, "1_1", 10, 0.7);
+            overlays["Rain radar (optional)"] =
+              rvTile(host + past[past.length - 1].path, 4, "1_1", 8, 0.7);
           }
 
           if (Object.keys(overlays).length) {
             L.control.layers(null, overlays, { collapsed: false }).addTo(map);
-            el.mapAttrib.textContent =
-              (sawCloud ? "Clouds" : "Rain") + " © RainViewer · " + baseAttrib + ".";
+            el.mapAttrib.textContent = sawCloud
+              ? "Showing satellite cloud tops © RainViewer (best at this regional zoom; " +
+                "toggle Rain radar for precipitation). " + baseAttrib + "."
+              : "Showing rain radar © RainViewer (satellite clouds unavailable). " +
+                baseAttrib + ".";
             el.mapAttrib.hidden = false;
           } else {
             noClouds();
