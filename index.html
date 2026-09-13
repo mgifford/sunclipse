@@ -1,5 +1,13 @@
 <!DOCTYPE html>
 <html lang="en">
+<!--
+  Sunclipse — sunsight & sunclipse quality predictor.
+  Copyright (C) 2026 Mike Gifford and contributors.
+  Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0).
+  This program is free software: you can redistribute it and/or modify it
+  under the terms of that licence; see the LICENSE file. It comes with NO
+  WARRANTY, to the extent permitted by law. Source: github.com/mgifford/sunclipse
+-->
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -963,7 +971,6 @@
     function isSunrise() { return state.mode === "sunrise"; }
     // Fuller's coinages: "sunsight" for sunrise, "sunclipse" for sunset.
     function eventWord() { return isSunrise() ? "sunsight" : "sunclipse"; }
-    function plainWord() { return isSunrise() ? "sunrise" : "sunset"; }
     function horizonWord() {
       // Prefer the true compass direction once we've computed it; fall back to
       // the rough east/west for the brief moment before the first prediction.
