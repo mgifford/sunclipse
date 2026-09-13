@@ -859,6 +859,7 @@
       scoreSummary: document.getElementById("score-summary"),
 
       timelineSection: document.getElementById("timeline-section"),
+      timelineNote: document.getElementById("timeline-note"),
       skySection:  document.getElementById("sky-section"),
       skyMoon:     document.getElementById("sky-moon"),
       skyTwilight: document.getElementById("sky-twilight"),
@@ -904,6 +905,8 @@
       corridor: null,     // [{dist, low}] samples toward the sun
       lastScore: null,    // most recent computed score
       elevation: null,    // ground elevation (m) from the forecast
+      tz: null,           // IANA timezone of the location (for display)
+      tzOffsetSec: 0,     // location's UTC offset (s) for hour matching
       terrainOffset: 0,   // minutes to shift (0..20)
       countdownTimer: null,
       lastSrMinute: null
@@ -959,7 +962,10 @@
 
     function fmtTime(date) {
       if (!(date instanceof Date) || isNaN(date.getTime())) return "n/a";
-      return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+      var opts = { hour: "numeric", minute: "2-digit" };
+      if (state.tz) opts.timeZone = state.tz; // show the LOCATION's local time
+      try { return date.toLocaleTimeString([], opts); }
+      catch (e) { return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }); }
     }
 
     function clamp(n, lo, hi) { return Math.max(lo, Math.min(hi, n)); }
@@ -1292,6 +1298,11 @@
     function renderTimeline() {
       if (!state.event) return;
       el.timelineSection.hidden = false;
+      el.timelineNote.textContent = state.tz
+        ? "Times are shown in the location’s local time (" + state.tz +
+          ") and update with the terrain slider below."
+        : "Times are shown in your device’s local timezone and update with the " +
+          "terrain slider below.";
       var phases = timelinePhases();
       var html = "";
       phases.forEach(function (p) {
@@ -1416,11 +1427,15 @@
     // Match the hourly forecast row nearest an instant. Open-Meteo returns GMT
     // times like "2026-09-12T18:00"; append seconds and a Z so they parse as
     // absolute UTC and align with SunCalc's Date.
-    function nearestHourIndex(timeArray, when) {
+    // Match the hourly row nearest an instant. offsetSec is the response's
+    // utc_offset_seconds: 0 for GMT responses (append Z), non-zero when the
+    // response is in a location's local time (subtract the offset to get UTC).
+    function nearestHourIndex(timeArray, when, offsetSec) {
       var target = when.getTime();
+      var off = (offsetSec || 0) * 1000;
       var bestIdx = 0, best = Infinity;
       for (var i = 0; i < timeArray.length; i++) {
-        var t = new Date(timeArray[i] + ":00Z").getTime();
+        var t = Date.parse(timeArray[i] + ":00Z") - off;
         var d = Math.abs(t - target);
         if (d < best) { best = d; bestIdx = i; }
       }
@@ -1439,8 +1454,11 @@
     function buildForecastUrls(lat, lon) {
       // forecast_days=2 so the "next" event can fall on tomorrow (e.g. an
       // evening visit asking about tomorrow's sunrise).
+      // timezone=auto so the response carries the LOCATION's timezone + offset;
+      // times are then shown in the place's local time, not the viewer's.
       var params = "hourly=cloud_cover,cloud_cover_low,cloud_cover_mid," +
-                   "cloud_cover_high,relative_humidity_2m,visibility&forecast_days=2";
+                   "cloud_cover_high,relative_humidity_2m,visibility" +
+                   "&forecast_days=2&timezone=auto";
       var mainUrl = "https://api.open-meteo.com/v1/forecast?latitude=" +
                     lat + "&longitude=" + lon + "&" + params;
 
@@ -1517,17 +1535,23 @@
           if (!main.hourly || !main.hourly.time) {
             throw new Error("Unexpected weather response.");
           }
-          var idx = nearestHourIndex(main.hourly.time, state.event);
+          // The location's own timezone (from timezone=auto) drives all display.
+          state.tz = main.timezone || null;
+          state.tzOffsetSec = (typeof main.utc_offset_seconds === "number")
+            ? main.utc_offset_seconds : 0;
+
+          var idx = nearestHourIndex(main.hourly.time, state.event, state.tzOffsetSec);
           state.elevation = (typeof main.elevation === "number") ? main.elevation : null;
 
           // Blend the corridor's low-cloud samples (weighted, skipping gaps).
+          // Corridor responses are GMT (no timezone param) -> offset 0.
           var samples = [], acc = 0, wSum = 0;
           urls.corridor.forEach(function (c, i) {
             var resp = results[i + 1];
             var low = null;
             if (resp && resp.hourly && resp.hourly.time) {
               low = num(resp.hourly.cloud_cover_low,
-                        nearestHourIndex(resp.hourly.time, state.event));
+                        nearestHourIndex(resp.hourly.time, state.event, 0));
             }
             samples.push({ dist: c.dist, low: low });
             if (low !== null) { acc += low * c.weight; wSum += c.weight; }
@@ -1538,7 +1562,7 @@
           var aod = null;
           if (aq && aq.hourly && aq.hourly.time) {
             aod = num(aq.hourly.aerosol_optical_depth,
-                      nearestHourIndex(aq.hourly.time, state.event));
+                      nearestHourIndex(aq.hourly.time, state.event, 0));
           }
 
           var m = {
